@@ -1,36 +1,50 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# برنامه دورکاری هفتگی
 
-## Getting Started
+تخصیص یک روز دورکاری در هفته برای ۶ نفر، با تقویم جلالی (شنبه تا چهارشنبه).
 
-First, run the development server:
+## امکانات
+
+- تنظیم **۱ یا ۲ روز** دورکاری برای هر نفر
+- تولید تصادفی برای هر هفته
+- ویرایش دستی روز(های) هر نفر
+- ناوبری بین هفته‌ها
+- رمز ساده برای ویرایش (`EDIT_PASSWORD`)
+
+## اجرا محلی
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+بدون `DATABASE_URL` داده‌ها فقط در حافظهٔ سرور می‌مانند (با ری‌استارت پاک می‌شوند).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+برای ذخیره پایدار، یک دیتابیس رایگان [Neon](https://neon.tech) بسازید و در `.env.local` قرار دهید:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+cp .env.example .env.local
+# DATABASE_URL و EDIT_PASSWORD را پر کنید
+npm run db:push
+npm run dev
+```
 
-## Learn More
+## دیپلوی روی Vercel (رایگان)
 
-To learn more about Next.js, take a look at the following resources:
+1. ریپو را به [Vercel](https://vercel.com) وصل کنید و Framework را Next.js بگذارید.
+2. در Neon یک پروژه رایگان بسازید و connection string را کپی کنید.
+3. در Vercel → Settings → Environment Variables:
+   - `DATABASE_URL` = همان connection string
+   - `EDIT_PASSWORD` = رمزی که تیم برای ویرایش می‌داند
+4. یک‌بار migration را اجرا کنید (لوکال با همان `DATABASE_URL`):
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm run db:push
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+یا SQL داخل `drizzle/0000_init.sql` را در Neon SQL Editor اجرا کنید.
 
-## Deploy on Vercel
+5. Deploy کنید. لینک عمومی فقط خواندنی است مگر با رمز ویرایش.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## افراد
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+لیست در `src/lib/people.ts` ثابت است؛ برای تغییر نام همان فایل را ویرایش کنید.
