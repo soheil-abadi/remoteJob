@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  isScheduleAdmin,
-  personFromPin,
-} from "@/lib/auth";
+import { personFromPin } from "@/lib/auth";
+import { isScheduleAdmin } from "@/lib/schedule-admin";
 import { getSchedule, upsertSchedule } from "@/lib/db/store";
 import type { DaysPerPerson } from "@/lib/people";
 import { isDaysPerPerson } from "@/lib/people";
@@ -26,7 +24,7 @@ export async function POST(request: NextRequest) {
     }
     if (!isScheduleAdmin(person)) {
       return NextResponse.json(
-        { error: "فقط سهیل می‌تواند برنامهٔ تصادفی بسازد." },
+        { error: "فقط مدیران برنامه می‌توانند برنامهٔ تصادفی بسازند." },
         { status: 403 },
       );
     }

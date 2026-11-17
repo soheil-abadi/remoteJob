@@ -20,6 +20,19 @@ export type SwapRequest = {
 
 export type SwapLists = { incoming: SwapRequest[]; outgoing: SwapRequest[] };
 
+export type DayChangeNotice = {
+  id: number;
+  weekStart: string;
+  person: string;
+  changedBy: string;
+  oldDays: WorkDay[];
+  newDays: WorkDay[];
+  readAt: string | null;
+  createdAt: string;
+};
+
+export type NoticeLists = { notices: DayChangeNotice[] };
+
 type Resource<T> =
   | { status: "loading" }
   | { status: "ready"; data: T }

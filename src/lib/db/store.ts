@@ -1,11 +1,13 @@
-import { and, desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import type { Assignments, DaysPerPerson, WorkDay } from "../people";
 import { inferDaysPerPerson } from "../week";
 import { getDb } from "./index";
 import {
+  dayChangeNotices,
   personPins,
   schedules,
   swapRequests,
+  type DayChangeNotice,
   type SwapRequest,
   type SwapStatus,
 } from "./schema";
@@ -29,10 +31,23 @@ export type SwapRequestRow = {
   updatedAt: Date;
 };
 
+export type DayChangeNoticeRow = {
+  id: number;
+  weekStart: string;
+  person: string;
+  changedBy: string;
+  oldDays: WorkDay[];
+  newDays: WorkDay[];
+  readAt: Date | null;
+  createdAt: Date;
+};
+
 const memory = new Map<string, ScheduleRow>();
 const memorySwaps = new Map<number, SwapRequestRow>();
 const memoryPins = new Map<string, string>();
+const memoryNotices = new Map<number, DayChangeNoticeRow>();
 let memorySwapId = 1;
+let memoryNoticeId = 1;
 
 function useMemory(): boolean {
   return !process.env.DATABASE_URL;
@@ -279,4 +294,129 @@ export async function upsertPersonPin(
       target: personPins.person,
       set: { pin, updatedAt },
     });
+}
+
+function toNoticeRow(row: DayChangeNotice): DayChangeNoticeRow {
+  return {
+    id: row.id,
+    weekStart: row.weekStart,
+    person: row.person,
+    changedBy: row.changedBy,
+    oldDays: row.oldDays,
+    newDays: row.newDays,
+    readAt: row.readAt,
+    createdAt: row.createdAt,
+  };
+}
+
+export async function createDayChangeNotices(
+  notices: Array<{
+    weekStart: string;
+    person: string;
+    changedBy: string;
+    oldDays: WorkDay[];
+    newDays: WorkDay[];
+  }>,
+): Promise<DayChangeNoticeRow[]> {
+  if (notices.length === 0) return [];
+
+  if (useMemory()) {
+    const createdAt = new Date();
+    return notices.map((notice) => {
+      const row: DayChangeNoticeRow = {
+        id: memoryNoticeId++,
+        weekStart: notice.weekStart,
+        person: notice.person,
+        changedBy: notice.changedBy,
+        oldDays: notice.oldDays,
+        newDays: notice.newDays,
+        readAt: null,
+        createdAt,
+      };
+      memoryNotices.set(row.id, row);
+      return row;
+    });
+  }
+
+  const db = getDb();
+  const inserted = await db
+    .insert(dayChangeNotices)
+    .values(
+      notices.map((notice) => ({
+        weekStart: notice.weekStart,
+        person: notice.person,
+        changedBy: notice.changedBy,
+        oldDays: notice.oldDays,
+        newDays: notice.newDays,
+      })),
+    )
+    .returning();
+
+  return inserted.map(toNoticeRow);
+}
+
+export async function listDayChangeNoticesForPerson(input: {
+  weekStart: string;
+  person: string;
+}): Promise<DayChangeNoticeRow[]> {
+  if (useMemory()) {
+    return [...memoryNotices.values()]
+      .filter(
+        (row) =>
+          row.weekStart === input.weekStart && row.person === input.person,
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(dayChangeNotices)
+    .where(
+      and(
+        eq(dayChangeNotices.weekStart, input.weekStart),
+        eq(dayChangeNotices.person, input.person),
+      ),
+    )
+    .orderBy(desc(dayChangeNotices.createdAt));
+
+  return rows.map(toNoticeRow);
+}
+
+export async function markDayChangeNoticesRead(input: {
+  person: string;
+  ids?: number[];
+  weekStart?: string;
+}): Promise<number> {
+  const readAt = new Date();
+
+  if (useMemory()) {
+    let count = 0;
+    for (const row of memoryNotices.values()) {
+      if (row.person !== input.person || row.readAt) continue;
+      if (input.ids && !input.ids.includes(row.id)) continue;
+      if (input.weekStart && row.weekStart !== input.weekStart) continue;
+      memoryNotices.set(row.id, { ...row, readAt });
+      count += 1;
+    }
+    return count;
+  }
+
+  const db = getDb();
+  const filters = [
+    eq(dayChangeNotices.person, input.person),
+    isNull(dayChangeNotices.readAt),
+  ];
+  if (input.ids?.length) filters.push(inArray(dayChangeNotices.id, input.ids));
+  if (input.weekStart) {
+    filters.push(eq(dayChangeNotices.weekStart, input.weekStart));
+  }
+
+  const updated = await db
+    .update(dayChangeNotices)
+    .set({ readAt })
+    .where(and(...filters))
+    .returning({ id: dayChangeNotices.id });
+
+  return updated.length;
 }

@@ -4,6 +4,7 @@ import {
   WORK_DAYS,
   type Assignments,
   type DaysPerPerson,
+  type Person,
   type WorkDay,
   emptyAssignments,
 } from "./people";
@@ -241,6 +242,75 @@ export function personMapFromAssignments(
     }
   }
   return map;
+}
+
+function sameDaySet(a: WorkDay[], b: WorkDay[]): boolean {
+  if (a.length !== b.length) return false;
+  const left = [...a].sort();
+  const right = [...b].sort();
+  return left.every((day, index) => day === right[index]);
+}
+
+export type DayChange = {
+  person: Person;
+  oldDays: WorkDay[];
+  newDays: WorkDay[];
+};
+
+/**
+ * Replace one person's remote days and validate the full week.
+ * Returns the next assignments plus a diff of everyone whose day set changed.
+ */
+export function reassignPersonDays(
+  assignments: Assignments,
+  person: Person,
+  days: WorkDay[],
+  daysPerPerson: DaysPerPerson,
+):
+  | { ok: true; assignments: Assignments; changes: DayChange[] }
+  | { ok: false; error: string } {
+  if (!PEOPLE.includes(person)) {
+    return { ok: false, error: `نام ناشناخته: ${person}` };
+  }
+
+  const uniqueDays = [...new Set(days)];
+  if (uniqueDays.length !== days.length) {
+    return { ok: false, error: "روز تکراری در انتخاب وجود دارد." };
+  }
+  for (const day of uniqueDays) {
+    if (!WORK_DAYS.includes(day)) {
+      return { ok: false, error: `روز نامعتبر است: ${day}` };
+    }
+  }
+  if (uniqueDays.length !== daysPerPerson) {
+    return {
+      ok: false,
+      error: `باید دقیقاً ${daysPerPerson} روز انتخاب شود.`,
+    };
+  }
+
+  const personMap = personMapFromAssignments(assignments);
+  const previous = personMap[person] ?? [];
+  if (sameDaySet(previous, uniqueDays)) {
+    return { ok: false, error: "روزهای انتخاب‌شده با برنامهٔ فعلی یکسان است." };
+  }
+
+  personMap[person] = uniqueDays;
+  const next = assignmentsFromPersonMap(personMap);
+  const validated = validateAssignments(next, daysPerPerson);
+  if (!validated.ok) return validated;
+
+  const nextMap = personMapFromAssignments(next);
+  const changes: DayChange[] = [];
+  for (const name of PEOPLE) {
+    const oldDays = personMapFromAssignments(assignments)[name] ?? [];
+    const newDays = nextMap[name] ?? [];
+    if (!sameDaySet(oldDays, newDays)) {
+      changes.push({ person: name, oldDays, newDays });
+    }
+  }
+
+  return { ok: true, assignments: next, changes };
 }
 
 function personHasDay(

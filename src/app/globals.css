@@ -574,6 +574,90 @@ body {
   cursor: not-allowed;
 }
 
+.admin-reassign-section,
+.notices-section {
+  margin-block-start: 20px;
+}
+
+.admin-reassign {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.admin-reassign h3,
+.notices-heading h2 {
+  font-size: .9375rem;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.admin-day-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.admin-day-options legend {
+  padding-inline: 4px;
+  color: var(--ink);
+  font-size: .875rem;
+  font-weight: 700;
+}
+
+.admin-day-options .day-option {
+  min-width: 0;
+  padding-inline: 10px;
+}
+
+.notices-section {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.notices-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.notices-heading .button {
+  margin-inline-start: auto;
+}
+
+.notice-list {
+  display: grid;
+  gap: 8px;
+}
+
+.notice-row {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fbfcfa;
+  font-size: .875rem;
+  line-height: 1.65;
+}
+
+.notice-row[data-unread] {
+  border-color: #abd0bd;
+  background: var(--jade-soft);
+}
+
 .swaps-section {
   margin-block-start: 20px;
   scroll-margin-block-start: 12px;

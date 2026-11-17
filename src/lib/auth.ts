@@ -1,7 +1,7 @@
 import { PEOPLE, type Person } from "./people";
 import { getPersonPinOverrides, upsertPersonPin } from "./db/store";
 
-export const SCHEDULE_ADMIN: Person = "سهیل";
+export { SCHEDULE_ADMINS, isScheduleAdmin } from "./schedule-admin";
 
 const MIN_PIN_LENGTH = 4;
 const MAX_PIN_LENGTH = 12;
@@ -120,10 +120,6 @@ export async function personFromPin(pin: unknown): Promise<Person | null> {
   }
   if (matches.length !== 1) return null;
   return matches[0];
-}
-
-export function isScheduleAdmin(person: Person): boolean {
-  return person === SCHEDULE_ADMIN;
 }
 
 export type ChangePinResult =

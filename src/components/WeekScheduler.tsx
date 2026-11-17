@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { isScheduleAdmin } from "@/lib/schedule-admin";
 import { DAYS_PER_PERSON_OPTIONS, isDaysPerPerson, type Assignments, type DaysPerPerson } from "@/lib/people";
 import {
   addWeeks, formatJalaliShort, formatWeekTitle, getWeekStart, getWorkDates,
   parseDateKey, personMapFromAssignments, toDateKey, toPersianDigits,
 } from "@/lib/week";
 import { SchedulerAccount } from "./SchedulerAccount";
+import { SchedulerAdminReassign } from "./SchedulerAdminReassign";
 import { CalendarDays, CalendarSkeleton, PersonAvatar, SchedulerBrand, SchedulerIcon } from "./SchedulerCalendar";
+import { SchedulerNotices } from "./SchedulerNotices";
 import { SchedulerSwaps, SwapHeader } from "./SchedulerSwaps";
 import { gsap, useSchedulerMotion } from "./scheduler-motion";
 import {
@@ -17,7 +20,6 @@ import {
 
 const PIN_KEY = "remote-person-pin";
 const DAYS_KEY = "remote-days-per-person";
-const SCHEDULE_ADMIN = "سهیل";
 
 type OpenAccount = (event: MouseEvent<HTMLButtonElement>) => void;
 
@@ -48,7 +50,7 @@ function WeekContent({
   const personalDays = useRef<HTMLElement>(null);
   const info = schedule.result.status === "ready" ? schedule.result.data : null;
   const assignments = info?.assignments ?? null;
-  const isAdmin = session?.person === SCHEDULE_ADMIN;
+  const isAdmin = Boolean(session && isScheduleAdmin(session.person));
   const myDays = session && assignments ? personMapFromAssignments(assignments)[session.person] ?? [] : [];
   const weekStart = parseDateKey(weekKey);
   const workDates = getWorkDates(weekStart);
@@ -87,7 +89,7 @@ function WeekContent({
   }
 
   async function generate() {
-    if (!isAdmin || !info || assignments || creating) return;
+    if (!session || !isAdmin || !info || assignments || creating) return;
     const fallback = "ساخت برنامه انجام نشد. دوباره تلاش کنید.";
     setCreating(true);
     setCreationFeedback(null);
@@ -178,6 +180,31 @@ function WeekContent({
           {info?.daysPerPerson && <span>{toPersianDigits(info.daysPerPerson)} روز دورکاری برای هر نفر</span>}
         </p>
       </section>
+
+      {session && assignments && info?.daysPerPerson && isAdmin && (
+        <section className="admin-reassign-section" aria-label="تغییر روز همکاران">
+          <SchedulerAdminReassign
+            session={session}
+            weekKey={weekKey}
+            workDates={workDates}
+            assignments={assignments}
+            daysPerPerson={info.daysPerPerson}
+            busy={creating}
+            runAction={runAction}
+            onScheduleChange={updateSchedule}
+          />
+        </section>
+      )}
+
+      {session && (
+        <SchedulerNotices
+          key={`notices-${session.person}-${weekKey}`}
+          session={session}
+          weekKey={weekKey}
+          workDates={workDates}
+          runAction={runAction}
+        />
+      )}
 
       <section id="swap-requests" className="swaps-section" aria-labelledby="swaps-title">
         {session ? (
