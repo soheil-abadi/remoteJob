@@ -1,33 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkEditPassword } from "@/lib/auth";
-import { upsertSchedule } from "@/lib/db/store";
+import {
+  isScheduleAdmin,
+  personFromPin,
+} from "@/lib/auth";
+import { getSchedule, upsertSchedule } from "@/lib/db/store";
 import type { DaysPerPerson } from "@/lib/people";
 import { isDaysPerPerson } from "@/lib/people";
 import {
   generateRandomAssignments,
-  parseDateKey,
-  toDateKey,
+  isValidWeekStart,
 } from "@/lib/week";
-
-function isValidWeekStart(value: string | null): value is string {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const date = parseDateKey(value);
-  return toDateKey(date) === value && date.getDay() === 6;
-}
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { weekStart, password, daysPerPerson } = body as {
+    const { weekStart, pin, daysPerPerson } = body as {
       weekStart?: string;
-      password?: string;
+      pin?: string;
       daysPerPerson?: DaysPerPerson;
     };
 
-    if (!checkEditPassword(password)) {
+    const person = await personFromPin(pin);
+    if (!person) {
+      return NextResponse.json({ error: "پین نادرست است." }, { status: 401 });
+    }
+    if (!isScheduleAdmin(person)) {
       return NextResponse.json(
-        { error: "رمز ویرایش نادرست است." },
-        { status: 401 },
+        { error: "فقط سهیل می‌تواند برنامهٔ تصادفی بسازد." },
+        { status: 403 },
       );
     }
 
@@ -42,6 +42,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "daysPerPerson باید ۱ یا ۲ باشد." },
         { status: 400 },
+      );
+    }
+
+    const existing = await getSchedule(weekStart);
+    if (existing) {
+      return NextResponse.json(
+        {
+          error:
+            "این هفته از قبل برنامه دارد. برای تغییر باید از دیگران درخواست جابه‌جایی بگیرید.",
+        },
+        { status: 409 },
       );
     }
 

@@ -1,521 +1,368 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { DAYS_PER_PERSON_OPTIONS, isDaysPerPerson, type Assignments, type DaysPerPerson } from "@/lib/people";
 import {
-  PEOPLE,
-  WORK_DAYS,
-  type Assignments,
-  type DaysPerPerson,
-  type WorkDay,
-  emptyAssignments,
-  isDaysPerPerson,
-} from "@/lib/people";
-import {
-  addWeeks,
-  assignmentsFromPersonMap,
-  formatJalaliShort,
-  formatWeekTitle,
-  getWeekStart,
-  getWorkDates,
-  personMapFromAssignments,
-  parseDateKey,
-  toDateKey,
-  toPersianDigits,
-  validateAssignments,
+  addWeeks, formatJalaliShort, formatWeekTitle, getWeekStart, getWorkDates,
+  parseDateKey, personMapFromAssignments, toDateKey, toPersianDigits,
 } from "@/lib/week";
+import { SchedulerAccount } from "./SchedulerAccount";
+import { CalendarDays, CalendarSkeleton, PersonAvatar, SchedulerBrand, SchedulerIcon } from "./SchedulerCalendar";
+import { SchedulerSwaps, SwapHeader } from "./SchedulerSwaps";
+import { gsap, useSchedulerMotion } from "./scheduler-motion";
+import {
+  errorMessage, postJson, readPreference, RequestError, savePreference, useSchedulerResource,
+  type Feedback, type RunWeekAction, type Schedule, type Session,
+} from "./scheduler-client";
 
-const PASSWORD_KEY = "remote-edit-password";
+const PIN_KEY = "remote-person-pin";
 const DAYS_KEY = "remote-days-per-person";
+const SCHEDULE_ADMIN = "سهیل";
 
-type LoadState = "loading" | "ready" | "error";
+type OpenAccount = (event: MouseEvent<HTMLButtonElement>) => void;
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 1);
-  return `${parts[0].slice(0, 1)}${parts[parts.length - 1].slice(0, 1)}`;
-}
+function WeekContent({
+  weekKey, today, session, restoring, preference, onPreferenceChange, openAccount, runAction,
+  direction, swapsOpen, setSwapsOpen,
+}: {
+  weekKey: string;
+  today: string;
+  session: Session | null;
+  restoring: boolean;
+  preference: DaysPerPerson;
+  onPreferenceChange: (value: DaysPerPerson) => void;
+  openAccount: OpenAccount;
+  runAction: RunWeekAction;
+  direction: -1 | 0 | 1;
+  swapsOpen: boolean;
+  setSwapsOpen: (open: boolean) => void;
+}) {
+  const schedule = useSchedulerResource<Schedule>(
+    `/api/schedule?weekStart=${encodeURIComponent(weekKey)}`,
+    "بارگذاری برنامه انجام نشد.",
+  );
+  const [creating, setCreating] = useState(false);
+  const [creationFeedback, setCreationFeedback] = useState<Feedback | null>(null);
+  const [previousAssignments, setPreviousAssignments] = useState<Assignments | null>(null);
+  const calendarPanel = useRef<HTMLElement>(null);
+  const personalDays = useRef<HTMLElement>(null);
+  const info = schedule.result.status === "ready" ? schedule.result.data : null;
+  const assignments = info?.assignments ?? null;
+  const isAdmin = session?.person === SCHEDULE_ADMIN;
+  const myDays = session && assignments ? personMapFromAssignments(assignments)[session.person] ?? [] : [];
+  const weekStart = parseDateKey(weekKey);
+  const workDates = getWorkDates(weekStart);
 
-type Props = {
-  initialWeekStart: string;
-};
+  const ready = Boolean(info);
+  const published = Boolean(assignments);
+  const showPersonalDays = Boolean(session && published);
 
-export default function WeekScheduler({ initialWeekStart }: Props) {
-  const [weekStart, setWeekStart] = useState(() => parseDateKey(initialWeekStart));
-  const [assignments, setAssignments] = useState<Assignments | null>(null);
-  const [daysPerPerson, setDaysPerPerson] = useState<DaysPerPerson>(1);
-  const [loadState, setLoadState] = useState<LoadState>("loading");
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [personDays, setPersonDays] = useState<Record<string, WorkDay[]>>({});
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [isCurrentWeek, setIsCurrentWeek] = useState(true);
-
-  const weekKey = toDateKey(weekStart);
-  const title = useMemo(() => formatWeekTitle(weekStart), [weekStart]);
-  const workDates = useMemo(() => getWorkDates(weekStart), [weekStart]);
-
-  useEffect(() => {
-    const savedPassword = localStorage.getItem(PASSWORD_KEY);
-    if (savedPassword) setPassword(savedPassword);
-    const savedDays = Number(localStorage.getItem(DAYS_KEY));
-    if (isDaysPerPerson(savedDays)) setDaysPerPerson(savedDays);
-  }, []);
-
-  useEffect(() => {
-    setIsCurrentWeek(
-      toDateKey(weekStart) === toDateKey(getWeekStart(new Date())),
-    );
-  }, [weekStart]);
-
-  const load = useCallback(async (key: string) => {
-    setLoadState("loading");
-    setError(null);
-    setMessage(null);
-    setEditing(false);
-    try {
-      const res = await fetch(`/api/schedule?weekStart=${key}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "خطا در بارگذاری");
-      setAssignments(data.assignments);
-      if (isDaysPerPerson(data.daysPerPerson)) {
-        setDaysPerPerson(data.daysPerPerson);
-      } else {
-        const savedDays = Number(localStorage.getItem(DAYS_KEY));
-        if (isDaysPerPerson(savedDays)) setDaysPerPerson(savedDays);
-      }
-      setLoadState("ready");
-    } catch (err) {
-      setLoadState("error");
-      setError(err instanceof Error ? err.message : "خطا در بارگذاری");
-      setAssignments(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!weekKey) return;
-    void load(weekKey);
-  }, [weekKey, load]);
-
-  function rememberPassword(value: string) {
-    setPassword(value);
-    if (value) localStorage.setItem(PASSWORD_KEY, value);
-  }
-
-  function changeDaysPerPerson(value: DaysPerPerson) {
-    setDaysPerPerson(value);
-    localStorage.setItem(DAYS_KEY, String(value));
-    if (editing) {
-      setPersonDays((prev) => {
-        const next: Record<string, WorkDay[]> = {};
-        for (const person of PEOPLE) {
-          next[person] = (prev[person] ?? []).slice(0, value);
-        }
-        return next;
-      });
-    }
-  }
-
-  function startEdit() {
-    setPersonDays(personMapFromAssignments(assignments ?? emptyAssignments()));
-    setEditing(true);
-    setMessage(null);
-    setError(null);
-  }
-
-  function cancelEdit() {
-    setEditing(false);
-    setError(null);
-  }
-
-  function togglePersonDay(person: string, day: WorkDay) {
-    setPersonDays((prev) => {
-      const current = prev[person] ?? [];
-      if (current.includes(day)) {
-        return { ...prev, [person]: current.filter((d) => d !== day) };
-      }
-      if (current.length >= daysPerPerson) {
-        if (daysPerPerson === 1) {
-          return { ...prev, [person]: [day] };
-        }
-        return prev;
-      }
-      return { ...prev, [person]: [...current, day] };
+  useSchedulerMotion(() => {
+    const grid = calendarPanel.current?.querySelector(".calendar-grid");
+    if (!ready || !grid) return;
+    gsap.fromTo(grid, { opacity: 0.62, x: direction * -12, y: direction ? 0 : 6 }, {
+      opacity: 1, x: 0, y: 0, duration: 0.29, ease: "power2.out", clearProps: "transform,opacity",
     });
+  }, [ready, published, direction]);
+
+  useSchedulerMotion(() => {
+    if (!personalDays.current) return;
+    gsap.fromTo(personalDays.current, { opacity: 0.72, y: 6 }, {
+      opacity: 1, y: 0, duration: 0.24, ease: "power2.out", clearProps: "transform,opacity",
+    });
+  }, [showPersonalDays]);
+
+  useSchedulerMotion(() => {
+    const moved = calendarPanel.current?.querySelectorAll("[data-reassigned='true']");
+    if (!moved?.length) return;
+    gsap.fromTo(moved, { y: 6, backgroundColor: "#d5ead5" }, {
+      y: 0, backgroundColor: "#d5ead500", duration: 0.68, ease: "power2.out",
+      clearProps: "transform,backgroundColor",
+    });
+  }, [assignments, previousAssignments]);
+
+  function updateSchedule(next: Schedule) {
+    setPreviousAssignments(assignments);
+    schedule.replace(next);
   }
 
-  async function saveManual() {
-    const next = assignmentsFromPersonMap(personDays);
-    const validation = validateAssignments(next, daysPerPerson);
-    if (!validation.ok) {
-      setError(validation.error);
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    setMessage(null);
+  async function generate() {
+    if (!isAdmin || !info || assignments || creating) return;
+    const fallback = "ساخت برنامه انجام نشد. دوباره تلاش کنید.";
+    setCreating(true);
+    setCreationFeedback(null);
     try {
-      const res = await fetch("/api/schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          weekStart: weekKey,
-          assignments: next,
-          daysPerPerson,
-          password,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "ذخیره نشد");
-      if (password) localStorage.setItem(PASSWORD_KEY, password);
-      setAssignments(data.assignments);
-      if (isDaysPerPerson(data.daysPerPerson)) {
-        setDaysPerPerson(data.daysPerPerson);
-      }
-      setEditing(false);
-      setMessage("برنامه ذخیره شد.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "ذخیره نشد");
+      const data = await runAction(() => postJson<Schedule>(
+        "/api/schedule/random", { weekStart: weekKey, daysPerPerson: preference, pin: session.pin }, fallback,
+      ));
+      schedule.replace(data);
+      setCreationFeedback({ kind: "success", message: "برنامهٔ این هفته ساخته و ذخیره شد." });
+      calendarPanel.current?.focus();
+    } catch (error) {
+      setCreationFeedback({ kind: "error", message: errorMessage(error, fallback) });
+      if (error instanceof RequestError && error.status === 409) schedule.reload();
     } finally {
-      setBusy(false);
+      setCreating(false);
     }
   }
-
-  async function generateRandom() {
-    if (
-      assignments &&
-      !window.confirm("برنامه فعلی این هفته جایگزین می‌شود. ادامه؟")
-    ) {
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const res = await fetch("/api/schedule/random", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          weekStart: weekKey,
-          daysPerPerson,
-          password,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "تولید نشد");
-      if (password) localStorage.setItem(PASSWORD_KEY, password);
-      setAssignments(data.assignments);
-      if (isDaysPerPerson(data.daysPerPerson)) {
-        setDaysPerPerson(data.daysPerPerson);
-      }
-      setEditing(false);
-      setMessage("برنامه تصادفی ساخته و ذخیره شد.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "تولید نشد");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const hasSchedule = Boolean(assignments);
-  const guideText =
-    daysPerPerson === 2
-      ? "هر نفر دو روز از شنبه تا چهارشنبه. پنج‌شنبه و جمعه تعطیل است."
-      : "هر نفر یک روز از شنبه تا چهارشنبه. پنج‌شنبه و جمعه تعطیل است.";
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-4 py-10 sm:gap-10 sm:px-6 sm:py-12">
-      <header className="flex flex-col gap-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex flex-col gap-1">
-            <p className="text-4xl font-black tracking-tight text-[var(--ink)] sm:text-5xl">
-              دورکار
-            </p>
-            <p className="text-sm text-[var(--muted)]">برنامه دورکاری تیم</p>
-          </div>
+    <>
+      {showPersonalDays && (
+        <aside ref={personalDays} className="personal-days" aria-labelledby="personal-title">
+          <h2 id="personal-title">روزهای دورکاری شما</h2>
+          {myDays.length > 0 ? (
+            <ul>{myDays.map((day) => (
+              <li key={day}><strong>{day}</strong><span>{formatJalaliShort(workDates[day])}</span></li>
+            ))}</ul>
+          ) : <p className="muted">برای شما روزی در این هفته ثبت نشده است.</p>}
+        </aside>
+      )}
 
-          <nav className="week-nav self-start" aria-label="ناوبری هفته">
-            <button
-              type="button"
-              className="btn-nav"
-              onClick={() => setWeekStart((w) => addWeeks(w, -1))}
-              disabled={busy}
-            >
-              قبل
-            </button>
-            <button
-              type="button"
-              className={`btn-nav ${isCurrentWeek ? "is-active" : ""}`}
-              onClick={() => setWeekStart(getWeekStart(new Date()))}
-              disabled={busy}
-            >
-              جاری
-            </button>
-            <button
-              type="button"
-              className="btn-nav"
-              onClick={() => setWeekStart((w) => addWeeks(w, 1))}
-              disabled={busy}
-            >
-              بعد
-            </button>
-          </nav>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <h1 className="max-w-3xl text-2xl font-extrabold leading-snug text-[var(--ink)] sm:text-3xl">
-            {title}
-          </h1>
-          <p className="max-w-xl text-base leading-7 text-[var(--muted)]">
-            {guideText}
-          </p>
-        </div>
-      </header>
-
-      <section
-        key={weekKey}
-        className="week-board overflow-hidden rounded-[16px] border border-[var(--line)] bg-[var(--surface)]/90"
-        aria-live="polite"
-      >
-        {loadState === "loading" && (
-          <div className="grid grid-cols-1 divide-y divide-[var(--line)] md:grid-cols-5 md:divide-x md:divide-y-0 md:divide-[var(--line)]">
-            {WORK_DAYS.map((day) => (
-              <div key={day} className="day-lane">
-                <div className="skeleton-block h-5 w-16" />
-                <div className="skeleton-block h-4 w-20" />
-                <div className="mt-2 flex flex-col gap-2">
-                  <div className="skeleton-block h-10 w-full" />
-                  <div className="skeleton-block h-10 w-[80%]" />
-                </div>
-              </div>
-            ))}
+      <section ref={calendarPanel} id="team-calendar" className="calendar-panel"
+        tabIndex={-1} aria-labelledby="calendar-title">
+        <h2 id="calendar-title" className="sr-only">تقویم هفته</h2>
+        {schedule.result.status === "loading" && <>
+          <p className="sr-only" role="status">در حال بارگذاری برنامهٔ هفته…</p>
+          <CalendarSkeleton />
+        </>}
+        {schedule.result.status === "error" && (
+          <div className="calendar-state status-actions">
+            <p className="feedback feedback-error" role="alert">{schedule.result.message}</p>
+            <button className="button" type="button" onClick={() => {
+              calendarPanel.current?.focus();
+              schedule.reload();
+            }}>تلاش دوباره برای برنامه</button>
           </div>
         )}
-
-        {loadState === "error" && (
-          <div className="flex flex-col items-center gap-4 px-6 py-16 text-center">
-            <p className="text-[var(--danger)]">{error}</p>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => void load(weekKey)}
-            >
-              تلاش دوباره
-            </button>
-          </div>
-        )}
-
-        {loadState === "ready" && !editing && (
+        {info && (
           <>
-            <div className="grid grid-cols-1 divide-y divide-[var(--line)] md:grid-cols-5 md:divide-x md:divide-y-0 md:divide-[var(--line)]">
-              {WORK_DAYS.map((day) => {
-                const names = assignments?.[day] ?? [];
-                const isBusyDay = names.length >= 2;
-                return (
-                  <article
-                    key={day}
-                    className={`day-lane ${isBusyDay ? "is-double" : ""}`}
-                  >
-                    <div className="flex flex-col gap-1">
-                      <h2 className="text-lg font-bold text-[var(--ink)]">
-                        {day}
-                      </h2>
-                      <p className="text-sm text-[var(--muted)]">
-                        {formatJalaliShort(workDates[day])}
-                      </p>
-                    </div>
-
-                    <div className="mt-auto flex flex-col gap-2">
-                      {!hasSchedule ? (
-                        <span className="text-sm text-[var(--muted)]">—</span>
-                      ) : names.length === 0 ? (
-                        <span className="text-sm text-[var(--muted)]">—</span>
-                      ) : (
-                        names.map((name) => (
-                          <div
-                            key={name}
-                            className="flex items-center gap-2 rounded-[10px] bg-white/70 px-2.5 py-2"
-                          >
-                            <span className="avatar" aria-hidden>
-                              {initials(name)}
-                            </span>
-                            <span className="text-sm font-semibold leading-5 text-[var(--ink)]">
-                              {name}
-                            </span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-
-            {!hasSchedule && (
-              <div className="border-t border-[var(--line)] bg-[var(--jade-soft)]/50 px-5 py-5 text-center sm:text-right">
-                <p className="text-sm leading-6 text-[var(--jade-dark)]">
-                  برای این هفته هنوز برنامه‌ای نیست. با «تولید تصادفی» شروع کنید
-                  یا دستی تنظیم کنید.
-                </p>
+            <CalendarDays weekStart={weekStart} today={today} assignments={assignments}
+              previousAssignments={previousAssignments} person={session?.person} />
+            {!assignments && (
+              <div className="calendar-state unpublished">
+                <div>
+                  <h3>برنامهٔ این هفته هنوز منتشر نشده است</h3>
+                  {isAdmin && <p className="muted">تعداد روزهای دورکاری هر نفر را انتخاب کنید.</p>}
+                </div>
+                {isAdmin && (
+                  <form className="create-schedule" onSubmit={(event) => {
+                    event.preventDefault();
+                    void generate();
+                  }} aria-busy={creating}>
+                    <fieldset className="day-options" disabled={creating}>
+                      <legend className="sr-only">تعداد روزهای دورکاری هر نفر</legend>
+                      {DAYS_PER_PERSON_OPTIONS.map((days) => (
+                        <label className="day-option" key={days}>
+                          <input type="radio" name="days-per-person" value={days} checked={preference === days}
+                            onChange={() => onPreferenceChange(days)} />
+                          <span>{toPersianDigits(days)} روز</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                    <button className="button button-primary" type="submit" disabled={creating}>
+                      {creating ? "در حال ساخت برنامه…" : "ساخت و ذخیرهٔ برنامه"}
+                    </button>
+                  </form>
+                )}
               </div>
             )}
           </>
         )}
+        {creationFeedback && (isAdmin || creationFeedback.kind === "success") && (
+          <p className={`calendar-feedback feedback feedback-${creationFeedback.kind}`}
+            role={creationFeedback.kind === "error" ? "alert" : "status"}>{creationFeedback.message}</p>
+        )}
+        <p className="calendar-footer">
+          <span>پنج‌شنبه و جمعه تعطیل است.</span>
+          {info?.daysPerPerson && <span>{toPersianDigits(info.daysPerPerson)} روز دورکاری برای هر نفر</span>}
+        </p>
+      </section>
 
-        {loadState === "ready" && editing && (
-          <div className="flex flex-col gap-5 p-5 sm:p-6">
-            <p className="text-sm leading-6 text-[var(--muted)]">
-              برای هر نفر دقیقاً {toPersianDigits(daysPerPerson)} روز کاری
-              انتخاب کنید.
-            </p>
-            <div className="grid gap-3">
-              {PEOPLE.map((person) => {
-                const selected = personDays[person] ?? [];
-                return (
-                  <div
-                    key={person}
-                    className="flex flex-col gap-3 rounded-[12px] border border-[var(--line)] px-3 py-3"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-2 font-semibold text-[var(--ink)]">
-                        <span className="avatar" aria-hidden>
-                          {initials(person)}
-                        </span>
-                        {person}
-                      </span>
-                      <span className="text-xs text-[var(--muted)]">
-                        {toPersianDigits(selected.length)}/
-                        {toPersianDigits(daysPerPerson)}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {WORK_DAYS.map((day) => {
-                        const active = selected.includes(day);
-                        return (
-                          <button
-                            key={day}
-                            type="button"
-                            className={`rounded-[10px] border px-3 py-2 text-sm font-medium transition ${
-                              active
-                                ? "border-[var(--jade)] bg-[var(--jade-soft)] text-[var(--jade-dark)]"
-                                : "border-[var(--line)] bg-white text-[var(--muted)]"
-                            }`}
-                            onClick={() => togglePersonDay(person, day)}
-                          >
-                            {day}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
+      <section id="swap-requests" className="swaps-section" aria-labelledby="swaps-title">
+        {session ? (
+          <SchedulerSwaps key={session.person} session={session} assignments={assignments} myDays={myDays}
+            weekKey={weekKey} weekStart={weekStart} runAction={runAction}
+            onScheduleChange={updateSchedule} onScheduleConflict={() => {
+              setPreviousAssignments(null);
+              schedule.reload();
+            }}
+            expanded={swapsOpen} onExpand={() => setSwapsOpen(true)} onToggle={() => setSwapsOpen(!swapsOpen)} />
+        ) : (
+          <>
+            <SwapHeader expanded={swapsOpen} onToggle={() => setSwapsOpen(!swapsOpen)}
+              onNewRequest={(event) => {
+                setSwapsOpen(true);
+                openAccount(event);
+              }} guest disabled={restoring} />
+            <div id="swap-content" hidden={!swapsOpen}>
+              <div className="swap-card swap-guest">
+                <p className="muted">برای فرستادن درخواست یا پاسخ به همکاران وارد شوید.</p>
+                <button className="button button-secondary" type="button" aria-haspopup="dialog"
+                  onClick={openAccount} disabled={restoring}>ورود با پین</button>
+              </div>
             </div>
-          </div>
-        )}
-
-        <div className="flex items-center justify-between gap-3 border-t border-[var(--line)] bg-[var(--mist)]/80 px-5 py-3 text-sm text-[var(--muted)]">
-          <span>پنج‌شنبه · جمعه</span>
-          <span className="font-medium">تعطیل</span>
-        </div>
-      </section>
-
-      <section className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium text-[var(--muted)]">
-            تعداد روز دورکاری هر نفر
-          </span>
-          <div className="week-nav self-start" role="group" aria-label="تنظیم روزها">
-            <button
-              type="button"
-              className={`btn-nav ${daysPerPerson === 1 ? "is-active" : ""}`}
-              onClick={() => changeDaysPerPerson(1)}
-              disabled={busy}
-            >
-              ۱ روز
-            </button>
-            <button
-              type="button"
-              className={`btn-nav ${daysPerPerson === 2 ? "is-active" : ""}`}
-              onClick={() => changeDaysPerPerson(2)}
-              disabled={busy}
-            >
-              ۲ روز
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
-          <div className="flex flex-wrap gap-2">
-            {!editing ? (
-              <>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => void generateRandom()}
-                  disabled={busy || loadState !== "ready"}
-                >
-                  {busy ? "در حال اجرا…" : "تولید تصادفی"}
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={startEdit}
-                  disabled={busy || loadState !== "ready"}
-                >
-                  ویرایش دستی
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => void saveManual()}
-                  disabled={busy}
-                >
-                  {busy ? "در حال ذخیره…" : "ذخیره"}
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={cancelEdit}
-                  disabled={busy}
-                >
-                  انصراف
-                </button>
-              </>
-            )}
-          </div>
-
-          <label className="flex w-full flex-col gap-1.5 sm:w-auto sm:min-w-[14rem]">
-            <span className="text-xs font-medium text-[var(--muted)]">
-              رمز ویرایش
-            </span>
-            <input
-              type="password"
-              className="field"
-              value={password}
-              onChange={(e) => rememberPassword(e.target.value)}
-              placeholder="رمز سرور"
-              autoComplete="current-password"
-            />
-          </label>
-        </div>
-
-        {error && loadState === "ready" && (
-          <p className="text-sm text-[var(--danger)]" role="alert">
-            {error}
-          </p>
-        )}
-        {message && (
-          <p className="text-sm font-medium text-[var(--jade-dark)]" role="status">
-            {message}
-          </p>
+          </>
         )}
       </section>
+    </>
+  );
+}
+
+export default function WeekScheduler({ initialWeekStart, initialToday }: {
+  initialWeekStart: string;
+  initialToday: string;
+}) {
+  const [{ key: weekKey, direction }, setWeek] = useState<{ key: string; direction: -1 | 0 | 1 }>(
+    { key: initialWeekStart, direction: 0 },
+  );
+  const [swapsOpen, setSwapsOpen] = useState(false);
+  const [today, setToday] = useState(initialToday);
+  const [session, setSession] = useState<Session | null>(null);
+  const [restoring, setRestoring] = useState(true);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [accountStatus, setAccountStatus] = useState<string | null>(null);
+  const [preference, setPreference] = useState<DaysPerPerson>(1);
+  const [mutating, setMutating] = useState(false);
+  const actionInFlight = useRef(false);
+  const headerAccount = useRef<HTMLButtonElement>(null);
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const isCurrent = weekKey === toDateKey(getWeekStart(parseDateKey(today)));
+
+  useEffect(() => {
+    function followAnchor() {
+      if (window.location.hash === "#swap-requests") setSwapsOpen(true);
+      if (window.location.hash === "#week-program") setSwapsOpen(false);
+    }
+    queueMicrotask(followAnchor);
+    window.addEventListener("hashchange", followAnchor);
+    return () => window.removeEventListener("hashchange", followAnchor);
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void Promise.resolve().then(async () => {
+      if (controller.signal.aborted) return;
+      setToday(toDateKey(new Date()));
+      const savedDays = Number(readPreference(DAYS_KEY));
+      if (isDaysPerPerson(savedDays)) setPreference(savedDays);
+      const pin = readPreference(PIN_KEY);
+
+      try {
+        if (pin) {
+          const { person } = await postJson<Pick<Session, "person">>(
+            "/api/auth/login", { pin }, "بازیابی حساب انجام نشد.", controller.signal,
+          );
+          if (!controller.signal.aborted) setSession({ person, pin });
+        }
+      } catch (error) {
+        if (!controller.signal.aborted && error instanceof RequestError && error.status === 401) {
+          savePreference(PIN_KEY, null);
+        }
+      } finally {
+        if (!controller.signal.aborted) setRestoring(false);
+      }
+    });
+    return () => controller.abort();
+  }, []);
+
+  const runAction: RunWeekAction = async (action) => {
+    if (actionInFlight.current) throw new RequestError("اقدام قبلی هنوز در حال انجام است.", 0);
+    actionInFlight.current = true;
+    setMutating(true);
+    try {
+      return await action();
+    } finally {
+      actionInFlight.current = false;
+      setMutating(false);
+    }
+  };
+
+  function openAccount(event: MouseEvent<HTMLButtonElement>) {
+    opener.current = event.currentTarget;
+    setAccountStatus(null);
+    setAccountOpen(true);
+  }
+
+  function closeAccount() {
+    setAccountOpen(false);
+    requestAnimationFrame(() => {
+      const target = opener.current?.isConnected ? opener.current : headerAccount.current;
+      target?.focus();
+      opener.current = null;
+    });
+  }
+
+  function changeSession(next: Session | null, message: string | null) {
+    setSession(next);
+    setAccountStatus(message);
+    savePreference(PIN_KEY, next?.pin ?? null);
+  }
+
+  function navigateWeek(offset: -1 | 0 | 1) {
+    if (actionInFlight.current) return;
+    const now = new Date();
+    setToday(toDateKey(now));
+    setWeek((current) => {
+      const key = offset === 0
+        ? toDateKey(getWeekStart(now))
+        : toDateKey(addWeeks(parseDateKey(current.key), offset));
+      if (key === current.key) return current;
+      return { key, direction: key > current.key ? 1 : -1 };
+    });
+  }
+
+  return (
+    <div className="scheduler-shell">
+      <header className="scheduler-header">
+        <div className="scheduler-frame scheduler-header-inner">
+          <SchedulerBrand />
+          <nav className="sidebar-nav" aria-label="بخش‌های دورکار">
+            <a href="#week-program" aria-current={!swapsOpen ? "location" : undefined}
+              onClick={() => setSwapsOpen(false)}><SchedulerIcon name="calendar" />برنامهٔ هفته</a>
+            <a href="#swap-requests" aria-current={swapsOpen ? "location" : undefined}
+              onClick={() => setSwapsOpen(true)}><SchedulerIcon name="request" />درخواست‌ها</a>
+          </nav>
+          <div className="header-actions">
+            {accountStatus && <span className="account-status" role="status">{accountStatus}</span>}
+            <button type="button" ref={headerAccount} className="button header-account"
+              onClick={openAccount} aria-haspopup="dialog" disabled={restoring || mutating}
+              aria-label={session ? `حساب کاربری ${session.person}` : undefined}>
+              {session ? <PersonAvatar name={session.person} /> : <SchedulerIcon name="user" />}
+              <span>{session?.person ?? "ورود با پین"}</span>
+              {session && <SchedulerIcon name="down" />}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main id="week-program" className="scheduler-frame scheduler-workspace">
+        <div className="week-toolbar">
+          <div>
+            <h1>برنامهٔ دورکاری تیم</h1>
+            <p className="week-date" aria-live="polite">{formatWeekTitle(parseDateKey(weekKey)).replace(/^هفته /, "")}</p>
+          </div>
+          <nav className="week-navigation" aria-label="ناوبری هفته">
+            <button className="button" type="button" disabled={mutating} onClick={() => navigateWeek(-1)}>
+              <SchedulerIcon name="right" />هفتهٔ قبل
+            </button>
+            <button className="button" type="button" disabled={mutating} aria-current={isCurrent ? "true" : undefined}
+              onClick={() => navigateWeek(0)}>هفتهٔ جاری</button>
+            <button className="button" type="button" disabled={mutating} onClick={() => navigateWeek(1)}>
+              هفتهٔ بعد<SchedulerIcon name="left" />
+            </button>
+          </nav>
+        </div>
+        <WeekContent key={weekKey} weekKey={weekKey} today={today} session={session} restoring={restoring}
+          preference={preference} openAccount={openAccount} runAction={runAction}
+          direction={direction} swapsOpen={swapsOpen} setSwapsOpen={setSwapsOpen}
+          onPreferenceChange={(value) => {
+            setPreference(value);
+            savePreference(DAYS_KEY, String(value));
+          }} />
+      </main>
+
+      {accountOpen && <SchedulerAccount session={session} onClose={closeAccount} onSessionChange={changeSession} />}
     </div>
   );
 }

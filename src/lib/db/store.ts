@@ -1,8 +1,14 @@
-import { eq } from "drizzle-orm";
-import type { Assignments, DaysPerPerson } from "../people";
+import { and, desc, eq, or } from "drizzle-orm";
+import type { Assignments, DaysPerPerson, WorkDay } from "../people";
 import { inferDaysPerPerson } from "../week";
 import { getDb } from "./index";
-import { schedules } from "./schema";
+import {
+  personPins,
+  schedules,
+  swapRequests,
+  type SwapRequest,
+  type SwapStatus,
+} from "./schema";
 
 type ScheduleRow = {
   weekStart: string;
@@ -11,7 +17,22 @@ type ScheduleRow = {
   updatedAt: Date;
 };
 
+export type SwapRequestRow = {
+  id: number;
+  weekStart: string;
+  fromPerson: string;
+  toPerson: string;
+  fromDay: WorkDay;
+  toDay: WorkDay;
+  status: SwapStatus;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 const memory = new Map<string, ScheduleRow>();
+const memorySwaps = new Map<number, SwapRequestRow>();
+const memoryPins = new Map<string, string>();
+let memorySwapId = 1;
 
 function useMemory(): boolean {
   return !process.env.DATABASE_URL;
@@ -23,6 +44,20 @@ function normalizeDaysPerPerson(
 ): DaysPerPerson {
   if (value === 1 || value === 2) return value;
   return inferDaysPerPerson(assignments);
+}
+
+function toSwapRow(row: SwapRequest): SwapRequestRow {
+  return {
+    id: row.id,
+    weekStart: row.weekStart,
+    fromPerson: row.fromPerson,
+    toPerson: row.toPerson,
+    fromDay: row.fromDay,
+    toDay: row.toDay,
+    status: row.status,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 export async function getSchedule(
@@ -79,4 +114,169 @@ export async function upsertSchedule(
     });
 
   return row;
+}
+
+export async function createSwapRequest(input: {
+  weekStart: string;
+  fromPerson: string;
+  toPerson: string;
+  fromDay: WorkDay;
+  toDay: WorkDay;
+}): Promise<SwapRequestRow> {
+  const now = new Date();
+
+  if (useMemory()) {
+    const row: SwapRequestRow = {
+      id: memorySwapId++,
+      weekStart: input.weekStart,
+      fromPerson: input.fromPerson,
+      toPerson: input.toPerson,
+      fromDay: input.fromDay,
+      toDay: input.toDay,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    };
+    memorySwaps.set(row.id, row);
+    return row;
+  }
+
+  const db = getDb();
+  const inserted = await db
+    .insert(swapRequests)
+    .values({
+      weekStart: input.weekStart,
+      fromPerson: input.fromPerson,
+      toPerson: input.toPerson,
+      fromDay: input.fromDay,
+      toDay: input.toDay,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+
+  return toSwapRow(inserted[0]);
+}
+
+export async function getSwapRequest(
+  id: number,
+): Promise<SwapRequestRow | null> {
+  if (useMemory()) {
+    return memorySwaps.get(id) ?? null;
+  }
+
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(swapRequests)
+    .where(eq(swapRequests.id, id))
+    .limit(1);
+
+  if (rows.length === 0) return null;
+  return toSwapRow(rows[0]);
+}
+
+export async function listPendingSwapsForPerson(input: {
+  weekStart: string;
+  person: string;
+}): Promise<{ incoming: SwapRequestRow[]; outgoing: SwapRequestRow[] }> {
+  if (useMemory()) {
+    const pending = [...memorySwaps.values()]
+      .filter(
+        (row) =>
+          row.weekStart === input.weekStart &&
+          row.status === "pending" &&
+          (row.fromPerson === input.person || row.toPerson === input.person),
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    return {
+      incoming: pending.filter((row) => row.toPerson === input.person),
+      outgoing: pending.filter((row) => row.fromPerson === input.person),
+    };
+  }
+
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(swapRequests)
+    .where(
+      and(
+        eq(swapRequests.weekStart, input.weekStart),
+        eq(swapRequests.status, "pending"),
+        or(
+          eq(swapRequests.fromPerson, input.person),
+          eq(swapRequests.toPerson, input.person),
+        ),
+      ),
+    )
+    .orderBy(desc(swapRequests.createdAt));
+
+  const mapped = rows.map(toSwapRow);
+  return {
+    incoming: mapped.filter((row) => row.toPerson === input.person),
+    outgoing: mapped.filter((row) => row.fromPerson === input.person),
+  };
+}
+
+export async function updateSwapStatus(
+  id: number,
+  status: SwapStatus,
+): Promise<SwapRequestRow | null> {
+  const updatedAt = new Date();
+
+  if (useMemory()) {
+    const existing = memorySwaps.get(id);
+    if (!existing) return null;
+    const next = { ...existing, status, updatedAt };
+    memorySwaps.set(id, next);
+    return next;
+  }
+
+  const db = getDb();
+  const updated = await db
+    .update(swapRequests)
+    .set({ status, updatedAt })
+    .where(eq(swapRequests.id, id))
+    .returning();
+
+  if (updated.length === 0) return null;
+  return toSwapRow(updated[0]);
+}
+
+/** Custom PIN overrides keyed by person name. */
+export async function getPersonPinOverrides(): Promise<Record<string, string>> {
+  if (useMemory()) {
+    return Object.fromEntries(memoryPins.entries());
+  }
+
+  const db = getDb();
+  const rows = await db.select().from(personPins);
+  const map: Record<string, string> = {};
+  for (const row of rows) {
+    map[row.person] = row.pin;
+  }
+  return map;
+}
+
+export async function upsertPersonPin(
+  person: string,
+  pin: string,
+): Promise<void> {
+  const updatedAt = new Date();
+
+  if (useMemory()) {
+    memoryPins.set(person, pin);
+    return;
+  }
+
+  const db = getDb();
+  await db
+    .insert(personPins)
+    .values({ person, pin, updatedAt })
+    .onConflictDoUpdate({
+      target: personPins.person,
+      set: { pin, updatedAt },
+    });
 }

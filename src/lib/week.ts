@@ -242,3 +242,110 @@ export function personMapFromAssignments(
   }
   return map;
 }
+
+function personHasDay(
+  assignments: Assignments,
+  person: string,
+  day: WorkDay,
+): boolean {
+  return (assignments[day] ?? []).includes(person);
+}
+
+function removePersonFromDay(
+  assignments: Assignments,
+  person: string,
+  day: WorkDay,
+): void {
+  assignments[day] = (assignments[day] ?? []).filter((name) => name !== person);
+}
+
+function addPersonToDay(
+  assignments: Assignments,
+  person: string,
+  day: WorkDay,
+): void {
+  if (!assignments[day].includes(person)) {
+    assignments[day].push(person);
+  }
+}
+
+/**
+ * Validate a one-day swap: each person must currently hold their offered day,
+ * and must not already be on the day they would receive.
+ */
+export function validateSwapProposal(
+  assignments: Assignments,
+  fromPerson: string,
+  toPerson: string,
+  fromDay: WorkDay,
+  toDay: WorkDay,
+): { ok: true } | { ok: false; error: string } {
+  if (fromPerson === toPerson) {
+    return { ok: false, error: "نمی‌توانید با خودتان جابه‌جا کنید." };
+  }
+  if (!PEOPLE.includes(fromPerson as (typeof PEOPLE)[number])) {
+    return { ok: false, error: `نام ناشناخته: ${fromPerson}` };
+  }
+  if (!PEOPLE.includes(toPerson as (typeof PEOPLE)[number])) {
+    return { ok: false, error: `نام ناشناخته: ${toPerson}` };
+  }
+  if (!WORK_DAYS.includes(fromDay) || !WORK_DAYS.includes(toDay)) {
+    return { ok: false, error: "روز نامعتبر است." };
+  }
+  if (fromDay === toDay) {
+    return { ok: false, error: "هر دو باید روزهای متفاوت پیشنهاد دهند." };
+  }
+  if (!personHasDay(assignments, fromPerson, fromDay)) {
+    return {
+      ok: false,
+      error: `${fromPerson} در ${fromDay} دورکار نیست.`,
+    };
+  }
+  if (!personHasDay(assignments, toPerson, toDay)) {
+    return {
+      ok: false,
+      error: `${toPerson} در ${toDay} دورکار نیست.`,
+    };
+  }
+  if (personHasDay(assignments, fromPerson, toDay)) {
+    return {
+      ok: false,
+      error: `${fromPerson} از قبل در ${toDay} دورکار است.`,
+    };
+  }
+  if (personHasDay(assignments, toPerson, fromDay)) {
+    return {
+      ok: false,
+      error: `${toPerson} از قبل در ${fromDay} دورکار است.`,
+    };
+  }
+  return { ok: true };
+}
+
+/** Exchange one day between two people. Caller must validate first. */
+export function applySwap(
+  assignments: Assignments,
+  fromPerson: string,
+  toPerson: string,
+  fromDay: WorkDay,
+  toDay: WorkDay,
+): Assignments {
+  const next: Assignments = {
+    شنبه: [...assignments.شنبه],
+    یکشنبه: [...assignments.یکشنبه],
+    دوشنبه: [...assignments.دوشنبه],
+    سه‌شنبه: [...assignments.سه‌شنبه],
+    چهارشنبه: [...assignments.چهارشنبه],
+  };
+  removePersonFromDay(next, fromPerson, fromDay);
+  removePersonFromDay(next, toPerson, toDay);
+  addPersonToDay(next, fromPerson, toDay);
+  addPersonToDay(next, toPerson, fromDay);
+  return next;
+}
+
+export function isValidWeekStart(value: string | null): value is string {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = parseDateKey(value);
+  return toDateKey(date) === value && date.getDay() === 6;
+}
