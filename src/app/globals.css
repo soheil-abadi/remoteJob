@@ -212,7 +212,7 @@ body {
 .icon-button:disabled,
 .control:disabled {
   border-color: var(--line);
-  background: #edf0ec;
+  background-color: #edf0ec;
   color: #5e6b62;
   cursor: not-allowed;
 }
@@ -702,6 +702,21 @@ body {
 
 .control[aria-invalid="true"] {
   border-color: var(--danger);
+}
+
+select.control {
+  appearance: none;
+  padding-inline-end: 2.35rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2352605b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-size: 1rem;
+  background-position: left .8rem center;
+  cursor: pointer;
+}
+
+select.control:disabled {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235e6b62' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  cursor: not-allowed;
 }
 
 .swap-preview {
