@@ -57,7 +57,7 @@ function WeekContent({
 
   const ready = Boolean(info);
   const published = Boolean(assignments);
-  const showPersonalDays = Boolean(session && published);
+  const showPersonalDays = Boolean(session && !restoring && published);
 
   useSchedulerMotion(() => {
     const grid = calendarPanel.current?.querySelector(".calendar-grid");
@@ -140,7 +140,8 @@ function WeekContent({
         {info && (
           <>
             <CalendarDays weekStart={weekStart} today={today} assignments={assignments}
-              previousAssignments={previousAssignments} person={session?.person} />
+              previousAssignments={previousAssignments}
+              person={session && !restoring ? session.person : undefined} />
             {!assignments && (
               <div className="calendar-state unpublished">
                 <div>
