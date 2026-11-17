@@ -8,22 +8,60 @@ const MAX_PIN_LENGTH = 12;
 
 type PinMap = Record<string, string>;
 
+function normalizeName(value: string): string {
+  return value.normalize("NFC").trim();
+}
+
+function pinValue(value: unknown): string | null {
+  if (typeof value === "string") {
+    const pin = value.trim();
+    return pin.length > 0 ? pin : null;
+  }
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+    return String(value);
+  }
+  return null;
+}
+
+/** Unwrap common Vercel/dashboard quote mistakes around the whole JSON blob. */
+function normalizePersonPinsRaw(raw: string): string {
+  let value = raw.trim();
+  if (
+    (value.startsWith("'") && value.endsWith("'")) ||
+    (value.startsWith("`") && value.endsWith("`"))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return value;
+}
+
+function resolvePersonName(name: string): Person | null {
+  const normalized = normalizeName(name);
+  return PEOPLE.find((person) => normalizeName(person) === normalized) ?? null;
+}
+
 function parsePersonPins(): PinMap {
   const raw = process.env.PERSON_PINS;
-  if (!raw) return {};
+  if (!raw?.trim()) return {};
   try {
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = JSON.parse(normalizePersonPinsRaw(raw)) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      console.error("PERSON_PINS must be a JSON object of name → pin.");
       return {};
     }
     const map: PinMap = {};
-    for (const [name, pin] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof pin === "string" && pin.length > 0) {
-        map[name] = pin;
-      }
+    for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const person = resolvePersonName(name);
+      const pin = pinValue(value);
+      if (!person || !pin) continue;
+      map[person] = pin;
+    }
+    if (Object.keys(map).length === 0) {
+      console.error("PERSON_PINS parsed but matched no known people/pins.");
     }
     return map;
-  } catch {
+  } catch (error) {
+    console.error("PERSON_PINS is not valid JSON.", error);
     return {};
   }
 }
@@ -40,7 +78,8 @@ function defaultDevPins(): PinMap {
 function basePinMap(): PinMap {
   const configured = parsePersonPins();
   if (Object.keys(configured).length > 0) return configured;
-  if (!process.env.PERSON_PINS) return defaultDevPins();
+  // Empty/whitespace PERSON_PINS still counts as unset for local defaults.
+  if (!process.env.PERSON_PINS?.trim()) return defaultDevPins();
   return {};
 }
 
